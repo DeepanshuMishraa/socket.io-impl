@@ -10,32 +10,14 @@ const io = new Server(server, {
   },
 });
 
-let messages:any = []; // Store messages with proper structure
-
-app.get("/", (req, res) => {
-  res.send("Chat server running");
-});
-
 io.on("connection", (socket) => {
-  console.log(`User connected with ID: ${socket.id}`);
+  console.log("a user connected");
 
-  // Send existing messages to newly connected client
-  socket.on("getMessages", () => {
-    socket.emit("initialMessages", messages);
-  });
-
-  // Handle new messages
-  socket.on("message", (messageData) => {
-    messages.push(`User with id: ${socket.id} says : ${messageData}`);
-    // Broadcast to all clients except sender
-    socket.broadcast.emit("newMessage", messageData);
-  });
-
-  socket.on("disconnect", () => {
-    console.log(`User disconnected: ${socket.id}`);
+  socket.on("stream", (data) => {
+    socket.broadcast.emit("stream", data);
   });
 });
 
 server.listen(3000, () => {
-  console.log("Server running at http://localhost:3000");
+  console.log("server running at http://localhost:3000");
 });

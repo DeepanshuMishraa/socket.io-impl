@@ -1,110 +1,121 @@
-// types.ts
- interface MessageData {
-  text: string;
-  id: number;
-  userId: string;
-}
+import { useEffect, useRef } from "react";
+import { io } from "socket.io-client";
 
-// App.tsx
-import { useState, useEffect, KeyboardEvent, ChangeEvent } from "react";
-import { io, Socket } from "socket.io-client";
-
-
-const socket: Socket = io("http://localhost:3000");
-
-function App() {
-  const [msg, setMsg] = useState<string>("");
-  const [messages, setMessages] = useState<MessageData[]>([]);
+export default function App() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamIntervalRef = useRef<number>();
 
   useEffect(() => {
-    // Get initial messages
-    socket.emit("getMessages");
+    const socket = io("http://localhost:3000");
 
-    // Listen for initial messages
-    socket.on("initialMessages", (data: MessageData[]) => {
-      setMessages(data);
+    socket.on("connect", () => {
+      console.log("Connected to server");
     });
 
-    // Listen for new messages
-    socket.on("newMessage", (message: MessageData) => {
-      setMessages((prev) => [...prev, message]);
+    // Handle receiving streams from other clients
+    socket.on("stream", (imageData: string) => {
+      const img = new Image();
+      img.onload = () => {
+        const context = canvasRef.current?.getContext("2d");
+        if (context && canvasRef.current) {
+          context.drawImage(
+            img,
+            0,
+            0,
+            canvasRef.current.width,
+            canvasRef.current.height
+          );
+        }
+      };
+      img.src = imageData;
     });
 
-    // Clean up socket listeners
+    const constraints = {
+      video: {
+        width: 640,
+        height: 480,
+        frameRate: { ideal: 10, max: 15 },
+      },
+    };
+
+    const startStreaming = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+
+        const canvas = canvasRef.current;
+        const context = canvas?.getContext("2d");
+
+        const captureAndSendFrame = () => {
+          if (context && videoRef.current && canvas) {
+            context.drawImage(
+              videoRef.current,
+              0,
+              0,
+              canvas.width,
+              canvas.height
+);
+
+            // Convert to base64 and emit
+            // Using a lower quality to reduce data size
+            const imageData = canvas.toDataURL("image/jpeg", 0.5);
+            socket.emit("stream", imageData);
+          }
+        };
+
+        // Capture frames at 10 FPS
+        streamIntervalRef.current = window.setInterval(
+          captureAndSendFrame,
+          100
+        );
+      } catch (error) {
+        console.error("Error accessing camera:", error);
+      }
+    };
+
+    startStreaming();
+
+    // Cleanup function
     return () => {
-      socket.off("initialMessages");
-      socket.off("newMessage");
+      // Clear interval
+      if (streamIntervalRef.current) {
+        clearInterval(streamIntervalRef.current);
+      }
+
+      // Stop all tracks
+      if (videoRef.current?.srcObject) {
+        const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+        tracks.forEach((track) => track.stop());
+      }
+
+      // Disconnect socket
+      socket.disconnect();
     };
   }, []);
 
-  const sendMessage = (): void => {
-    if (msg.trim() !== "") {
-      const messageData: MessageData = {
-        text: msg,
-        id: Date.now(),
-        userId: socket.id as string
-      };
-
-      socket.emit("message", messageData);
-      setMessages((prev) => [...prev, messageData]); // Add message locally
-      setMsg(""); // Clear input
-    }
-  };
-
-  const handleKeyPress = (e: KeyboardEvent<HTMLInputElement>): void => {
-    if (e.key === 'Enter') {
-      sendMessage();
-    }
-  };
-
-  const handleInputChange = (e: ChangeEvent<HTMLInputElement>): void => {
-    setMsg(e.target.value);
-  };
-
   return (
-    <div className="p-4 max-w-2xl mx-auto">
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="mb-4 h-96 overflow-y-auto border rounded p-4">
-          {messages.length > 0 ? (
-            messages.map((message) => (
-              <div
-                key={message.id}
-                className={`mb-2 p-2 rounded ${
-                  message.userId === socket.id
-                    ? 'bg-blue-100 ml-auto max-w-[80%]'
-                    : 'bg-gray-100 mr-auto max-w-[80%]'
-                }`}
-              >
-                {message.text}
-              </div>
-            ))
-          ) : (
-            <div className="text-gray-500 text-center">No messages yet</div>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            className="flex-1 border rounded p-2"
-            onChange={handleInputChange}
-            onKeyPress={handleKeyPress}
-            value={msg}
-            placeholder="Type a message"
-          />
-          <button
-            onClick={sendMessage}
-            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-            type="button"
-          >
-            Send
-          </button>
-        </div>
+    <div className="flex flex-col items-center gap-4 p-4">
+      <h1 className="text-xl font-bold">Video Stream</h1>
+      <div className="relative">
+        {/* Local video preview */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          className="w-full max-w-xl rounded-lg shadow-lg"
+        />
+        {/* Canvas for receiving remote streams */}
+        <canvas
+          ref={canvasRef}
+          width="640"
+          height="480"
+          className="w-full max-w-xl mt-4 rounded-lg shadow-lg"
+        />
       </div>
     </div>
   );
 }
 
-export default App;
-
-// vite-env.d.ts (Add this file in your src directory if it doesn't exist)
-/// <reference types="vite/client" />
